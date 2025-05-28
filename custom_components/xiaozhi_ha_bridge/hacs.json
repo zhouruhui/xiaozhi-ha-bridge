@@ -1,0 +1,9 @@
+{
+  "name": "Xiaozhi HA Bridge",
+  "content_in_root": false,
+  "country": ["CN", "US"],
+  "domains": ["xiaozhi_ha_bridge"],
+  "homeassistant": "2023.7.0",
+  "zip_release": true,
+  "filename": "xiaozhi_ha_bridge.zip"
+} 
