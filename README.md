@@ -1,167 +1,229 @@
-# Xiaozhi HA Bridge
+# Xiaozhi Home Assistant Bridge
 
-[![GitHub release](https://img.shields.io/github/release/zhouruhui/xiaozhi-ha-bridge.svg)](https://github.com/zhouruhui/xiaozhi-ha-bridge/releases)
-[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![License](https://img.shields.io/github/license/zhouruhui/xiaozhi-ha-bridge.svg)](LICENSE)
+🤖 **小智AI终端 Home Assistant WebSocket桥接组件**
 
-小智AI终端与Home Assistant之间的桥接组件，支持WebSocket音频流、语音识别、TTS、设备控制等功能。
+这是一个Home Assistant自定义组件，用于通过WebSocket协议连接小智AI终端设备，实现本地语音交互和智能家居控制。
 
-## 项目概述
+## ✨ 功能特性
 
-本项目为 [小智AI聊天机器人](https://github.com/78/xiaozhi-esp32) 提供与 Home Assistant 的集成方案，让小智终端可以直接与 HA 的语音助手交互，实现本地化的语音控制。
+- 🔌 **WebSocket连接**：与小智AI终端建立实时WebSocket通信
+- 🎤 **语音处理**：支持OPUS音频格式的语音识别和合成
+- 🏠 **智能家居集成**：与HA Assist Pipeline无缝配合
+- 📱 **设备管理**：自动发现和管理小智终端设备
+- 🔊 **音频流**：高质量的双向音频传输
+- 🛡️ **安全认证**：支持访问令牌验证
 
-### 主要特性
+## 🎯 版本兼容性
 
-- 🎤 **语音识别**：集成HA Assist Pipeline，支持多语言
-- 🔊 **TTS语音合成**：支持多种TTS引擎
-- 🏠 **IoT设备控制**：通过语音直接控制HA内设备
-- 📱 **多设备管理**：支持多个小智终端同时连接
-- 🔐 **Token鉴权**：可选的设备身份验证
-- 😊 **情感分析**：简单的情感状态反馈
-- 🐛 **详细调试**：丰富的日志输出便于调试
+| 组件版本 | 终端固件版本 | Home Assistant版本 | 状态 |
+|---------|-------------|-------------------|------|
+| v1.0.0  | v1.6.5+     | 2024.1+           | ✅ 稳定 |
 
-## 安装方法
+## 📋 前置要求
 
-### 方法1: HACS安装（推荐）
+- **Home Assistant** 2024.1 或更新版本
+- **小智AI终端** 固件版本 1.6.5 或更新版本
+- 本地网络环境（支持WebSocket通信）
 
-1. 在HACS中添加自定义仓库：`https://github.com/zhouruhui/xiaozhi-ha-bridge`
-2. 搜索 "Xiaozhi HA Bridge" 并安装
+## 🚀 安装指南
+
+### 方法1：通过HACS安装（推荐）
+
+1. 确保已安装 [HACS](https://hacs.xyz/)
+2. 在HACS中添加自定义仓库：
+   ```
+   https://github.com/zhouruhui/xiaozhi-ha-bridge
+   ```
+3. 搜索并安装 "Xiaozhi Home Assistant Bridge"
+4. 重启Home Assistant
+
+### 方法2：手动安装
+
+1. 下载本仓库的代码
+2. 将 `custom_components/xiaozhi_ha_bridge` 文件夹复制到Home Assistant的 `custom_components` 目录
 3. 重启Home Assistant
 
-### 方法2: 手动安装
+## ⚙️ 配置说明
 
-1. 下载本仓库
-2. 将 `custom_components/xiaozhi_ha_bridge` 目录复制到HA的 `custom_components` 目录下
-3. 重启Home Assistant
+### 1. 添加集成
 
-## 配置说明
+在Home Assistant中添加集成：
 
-### HA端配置
+1. 进入 **设置** → **设备与服务** → **添加集成**
+2. 搜索 "Xiaozhi Home Assistant Bridge"
+3. 按照向导完成配置
 
-在 `configuration.yaml` 中添加配置（可选）：
+### 2. 配置参数
+
+| 参数 | 说明 | 默认值 | 必填 |
+|------|------|--------|------|
+| `host` | WebSocket监听地址 | `0.0.0.0` | ❌ |
+| `port` | WebSocket监听端口 | `8123` | ❌ |
+| `path` | WebSocket路径 | `/api/xiaozhi_ws` | ❌ |
+| `token_required` | 是否需要访问令牌 | `false` | ❌ |
+
+### 3. 终端设备配置
+
+确保你的小智AI终端固件已更新到v1.6.5+，并配置WebSocket地址：
+
+```bash
+# 通过串口或OTA配置
+websocket_url ws://<HA_IP>:8123/api/xiaozhi_ws
+websocket_version 3
+```
+
+## 🎵 音频配置
+
+### 支持的音频格式
+
+- **编码格式**：OPUS
+- **采样率**：16000 Hz
+- **声道数**：单声道（Mono）
+- **帧长度**：60ms（推荐）
+
+### 音频流程
+
+```
+[小智终端] ━━━ OPUS音频 ━━━▶ [HA Bridge] ━━━ PCM ━━━▶ [Assist Pipeline]
+             ◀━━━ OPUS音频 ━━━             ◀━━━ TTS ━━━
+```
+
+## 🔧 使用示例
+
+### 自动化配置
 
 ```yaml
-xiaozhi_ha_bridge:
-  pipeline_id: "01234567-89ab-cdef-0123-456789abcdef"  # 指定Assist Pipeline ID
-  tts_engine: "tts.google_translate"                   # 指定TTS引擎
-  language: "zh-CN"                                    # 语言设置
-  debug: true                                          # 调试模式
-  require_token: false                                 # 是否需要Token鉴权
-  allowed_tokens:                                      # 允许的Token列表
-    - "your-secret-token-1"
-    - "your-secret-token-2"
+# automation.yaml
+- alias: "小智语音控制客厅灯"
+  trigger:
+    - platform: state
+      entity_id: sensor.xiaozhi_voice_command
+  condition:
+    - condition: template
+      value_template: "{{ '开灯' in trigger.to_state.state }}"
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.living_room
 ```
 
-### 终端配置
+### 脚本配置
 
-配置小智终端连接到HA：
-
-#### 通过串口命令
-```bash
-set websocket url ws://192.168.1.100:8123/api/xiaozhi_ws
-set websocket version 3
+```yaml
+# scripts.yaml
+xiaozhi_tts_announcement:
+  alias: "小智语音播报"
+  sequence:
+    - service: xiaozhi_ha_bridge.send_tts
+      data:
+        entity_id: sensor.xiaozhi_device
+        message: "{{ message }}"
+        voice: "xiaomo"
 ```
 
-#### 通过OTA配置
-```json
-{
-  "websocket": {
-    "url": "ws://192.168.1.100:8123/api/xiaozhi_ws",
-    "version": 3
-  }
-}
+## 🛠️ 故障排查
+
+### 常见问题
+
+#### 1. WebSocket连接失败
+```
+ERROR: WebSocket connection failed
+```
+**解决方案**：
+- 检查终端设备的WebSocket地址配置
+- 确认Home Assistant防火墙设置
+- 验证网络连通性：`ping <HA_IP>`
+
+#### 2. 音频无响应
+```
+WARNING: Audio stream timeout
+```
+**解决方案**：
+- 确认音频格式：OPUS 16kHz单声道
+- 检查网络延迟（应<50ms）
+- 重启Home Assistant和终端设备
+
+#### 3. 设备离线
+```
+INFO: Device disconnected
+```
+**解决方案**：
+- 检查终端设备WiFi连接
+- 确认OTA配置服务器可访问
+- 查看终端设备串口日志
+
+### 调试模式
+
+启用调试日志：
+
+```yaml
+# configuration.yaml
+logger:
+  default: info
+  logs:
+    custom_components.xiaozhi_ha_bridge: debug
 ```
 
-## 使用方法
+## 📊 监控面板
 
-1. 确保HA已安装并配置好Assist Pipeline和TTS服务
-2. 安装本组件并重启HA
-3. 配置小智终端连接到HA的WebSocket服务
-4. 唤醒小智终端，开始语音交互
+### Lovelace卡片示例
 
-## 调试信息
-
-启用调试模式后，可在HA日志中看到详细信息：
-
-- 🔗 设备连接/断开状态
-- 📨 消息收发详情
-- 🎤 语音识别过程
-- 🔊 TTS合成状态
-- 🏠 IoT设备控制结果
-- 😊 情感状态分析
-
-查看方法：`设置 → 系统 → 日志`，搜索 `xiaozhi_ha_bridge`
-
-## 支持的功能
-
-### 语音交互
-- 语音识别（STT）
-- 意图理解
-- 对话生成
-- 语音合成（TTS）
-
-### 设备控制
-- 灯光控制
-- 插座开关
-- 空调控制
-- 其他HA设备
-
-### 扩展功能
-- 多设备并发
-- 情感状态反馈
-- Token安全验证
-- 详细日志调试
-
-## 故障排除
-
-| 问题 | 解决方案 |
-|------|----------|
-| 连接失败 | 检查WebSocket地址和端口，确认网络连通性 |
-| 语音识别无响应 | 检查Assist Pipeline配置，确认音频格式 |
-| TTS无声音 | 检查TTS引擎设置，查看相关日志 |
-| 设备鉴权失败 | 检查Token配置，确认终端Token正确 |
-
-## 技术架构
-
-```
-[小智终端] --WebSocket+OPUS音频--> [HA Bridge组件] --API--> [HA语音助手/设备控制]
-         <----------------TTS音频-------------------/
+```yaml
+# dashboard配置
+type: entities
+title: 小智AI终端
+entities:
+  - entity: sensor.xiaozhi_device_status
+    name: 设备状态
+  - entity: sensor.xiaozhi_audio_quality
+    name: 音频质量
+  - entity: switch.xiaozhi_voice_assistant
+    name: 语音助手
 ```
 
-## 依赖要求
+## 🔄 版本更新
 
-- Home Assistant 2023.7及以上
-- Assist Pipeline集成
-- TTS集成（如Google Translate TTS）
-- 小智AI终端固件
+### v1.0.0 (2025.05.28)
+- ✨ 初始版本发布
+- ✅ WebSocket协议支持
+- ✅ OPUS音频处理
+- ✅ 设备自动发现
+- ✅ Assist Pipeline集成
 
-## 贡献指南
+## 🤝 贡献指南
 
-欢迎提交Issue和Pull Request！
+欢迎贡献代码！请：
 
 1. Fork本仓库
-2. 创建功能分支
-3. 提交更改
-4. 发起Pull Request
+2. 创建特性分支：`git checkout -b feature/new-feature`
+3. 提交更改：`git commit -am 'Add new feature'`
+4. 推送分支：`git push origin feature/new-feature`
+5. 创建Pull Request
 
-## 许可证
+## 📝 开发计划
 
-本项目采用MIT许可证，详见 [LICENSE](LICENSE) 文件。
+- [ ] 支持多设备同时连接
+- [ ] 添加语音命令自定义
+- [ ] 集成更多Home Assistant服务
+- [ ] 支持设备群组管理
+- [ ] 添加音频质量监控
 
-## 相关项目
+## ⚖️ 许可证
 
-- [小智AI聊天机器人](https://github.com/78/xiaozhi-esp32) - ESP32终端固件
-- [ESPHome Voice Assistant](https://esphome.io/components/voice_assistant.html) - 参考实现
-- [Home Assistant](https://www.home-assistant.io/) - 智能家居平台
+本项目采用 [MIT许可证](LICENSE) 开源。
 
-## 支持
+## 🔗 相关链接
 
-如有问题或建议，请：
+- [小智AI终端项目](https://github.com/78/xiaozhi-esp32) - 终端固件源码
+- [Home Assistant文档](https://www.home-assistant.io/docs/) - HA官方文档
+- [ESPHome语音助手](https://esphome.io/components/voice_assistant.html) - 参考实现
 
-1. 查看 [Issues](https://github.com/zhouruhui/xiaozhi-ha-bridge/issues)
-2. 提交新的Issue
-3. 加入讨论群组
+## 💬 技术支持
+
+- **GitHub Issues**：[提交问题](https://github.com/zhouruhui/xiaozhi-ha-bridge/issues)
+- **QQ群**：376893254
+- **电子邮件**：your-email@example.com
 
 ---
 
-**让小智与你的智能家居无缝连接！** 🏠✨ 
+**🎉 享受与小智AI的智能对话体验！** 
