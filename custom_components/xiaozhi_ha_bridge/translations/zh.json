@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "设置小智HA桥接",
+        "description": "配置小智AI终端与Home Assistant的桥接服务。\n\n小智终端将通过WebSocket连接到此服务，并使用HA的Assist Pipeline进行语音处理。",
+        "data": {
+          "name": "服务名称",
+          "pipeline_id": "Assist Pipeline",
+          "tts_engine": "TTS引擎",
+          "language": "语言",
+          "debug": "调试模式",
+          "require_token": "需要访问令牌",
+          "allowed_tokens": "允许的访问令牌"
+        },
+        "data_description": {
+          "name": "在Home Assistant中显示的服务名称",
+          "pipeline_id": "用于语音处理的Assist Pipeline（留空使用默认）",
+          "tts_engine": "文本转语音引擎（留空使用默认）",
+          "language": "语音识别和处理的语言",
+          "debug": "启用详细的调试日志",
+          "require_token": "需要访问令牌才能连接（推荐启用）",
+          "allowed_tokens": "允许连接的访问令牌列表"
+        }
+      },
+      "reconfigure": {
+        "title": "重新配置小智HA桥接",
+        "description": "修改小智HA桥接服务的配置。",
+        "data": {
+          "pipeline_id": "Assist Pipeline",
+          "tts_engine": "TTS引擎",
+          "language": "语言",
+          "debug": "调试模式",
+          "require_token": "需要访问令牌"
+        }
+      }
+    },
+    "error": {
+      "invalid_pipeline": "指定的Assist Pipeline无效",
+      "unknown": "未知错误，请重试"
+    },
+    "abort": {
+      "already_configured": "此服务已经配置过了"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "小智HA桥接选项",
+        "description": "配置小智HA桥接的高级选项。",
+        "data": {
+          "debug": "调试模式",
+          "require_token": "需要访问令牌"
+        },
+        "data_description": {
+          "debug": "启用详细的调试日志（重启后生效）",
+          "require_token": "需要访问令牌才能连接（推荐启用）"
+        }
+      }
+    }
+  }
+} 

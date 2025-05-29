@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Setup Xiaozhi HA Bridge",
+        "description": "Configure the bridge service between Xiaozhi AI Terminal and Home Assistant. Xiaozhi terminals will connect to this service via WebSocket and use HA's Assist Pipeline for voice processing.",
+        "data": {
+          "name": "Service Name",
+          "pipeline_id": "Assist Pipeline",
+          "tts_engine": "TTS Engine",
+          "language": "Language",
+          "debug": "Debug Mode",
+          "require_token": "Require Access Token",
+          "allowed_tokens": "Allowed Access Tokens"
+        },
+        "data_description": {
+          "name": "Service name displayed in Home Assistant",
+          "pipeline_id": "Assist Pipeline for voice processing (leave empty for default)",
+          "tts_engine": "Text-to-speech engine (leave empty for default)",
+          "language": "Language for speech recognition and processing",
+          "debug": "Enable detailed debug logging",
+          "require_token": "Require access token for connection (recommended)",
+          "allowed_tokens": "List of allowed access tokens for connection"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Xiaozhi HA Bridge",
+        "description": "Modify the configuration of Xiaozhi HA Bridge service.",
+        "data": {
+          "pipeline_id": "Assist Pipeline",
+          "tts_engine": "TTS Engine",
+          "language": "Language",
+          "debug": "Debug Mode",
+          "require_token": "Require Access Token"
+        }
+      }
+    },
+    "error": {
+      "invalid_pipeline": "The specified Assist Pipeline is invalid",
+      "unknown": "Unknown error, please try again"
+    },
+    "abort": {
+      "already_configured": "This service is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Xiaozhi HA Bridge Options",
+        "description": "Configure advanced options for Xiaozhi HA Bridge.",
+        "data": {
+          "debug": "Debug Mode",
+          "require_token": "Require Access Token"
+        },
+        "data_description": {
+          "debug": "Enable detailed debug logging (takes effect after restart)",
+          "require_token": "Require access token for connection (recommended)"
+        }
+      }
+    }
+  }
+} 

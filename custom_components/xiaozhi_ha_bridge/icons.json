@@ -1,0 +1,23 @@
+{
+  "services": {
+    "xiaozhi_ha_bridge": "mdi:robot"
+  },
+  "entities": {
+    "xiaozhi_ha_bridge": "mdi:microphone"
+  },
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "name": "mdi:rename-box",
+          "pipeline_id": "mdi:pipe",
+          "tts_engine": "mdi:speaker",
+          "language": "mdi:translate",
+          "debug": "mdi:bug",
+          "require_token": "mdi:key",
+          "allowed_tokens": "mdi:key-variant"
+        }
+      }
+    }
+  }
+} 

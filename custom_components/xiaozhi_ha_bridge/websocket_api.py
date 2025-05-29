@@ -27,15 +27,17 @@ _LOGGER = logging.getLogger(__name__)
 
 class XiaozhiDevice:
     """小智设备管理类"""
-    def __init__(self, device_id, client_id, ws):
+    def __init__(self, device_id, client_id, ws, entry_id):
         self.device_id = device_id
         self.client_id = client_id
         self.ws = ws
+        self.entry_id = entry_id
         self.session_id = str(uuid.uuid4())
         self.status = DEVICE_STATUS_CONNECTED
         self.connected_time = datetime.now()
         self.last_activity = datetime.now()
-        self.audio_chunks = []
+        self.pipeline_handler_id = None
+        self.current_pipeline = None
         
     def update_activity(self):
         self.last_activity = datetime.now()
@@ -44,19 +46,44 @@ class XiaozhiDevice:
         self.status = status
         self.update_activity()
 
-async def async_setup_ws(hass):
+async def async_setup_ws(hass, entry_id=None):
     """注册 WebSocket 路由"""
     app = hass.http.app
-    app.router.add_route("GET", WS_PATH, lambda req: ws_handler(hass, req))
-    _LOGGER.info("🚀 xiaozhi_ha_bridge WebSocket 服务已启动: %s", WS_PATH)
+    
+    # 创建路由处理函数，绑定entry_id
+    async def ws_handler_wrapper(request):
+        return await ws_handler(hass, request, entry_id)
+    
+    # 如果是特定entry，使用特定路径；否则使用通用路径
+    if entry_id:
+        ws_path = f"{WS_PATH}_{entry_id}"
+    else:
+        ws_path = WS_PATH
+        
+    app.router.add_route("GET", ws_path, ws_handler_wrapper)
+    _LOGGER.info("🚀 xiaozhi_ha_bridge WebSocket 服务已启动: %s (entry: %s)", ws_path, entry_id or "default")
 
-async def ws_handler(hass, request):
+async def ws_handler(hass, request, entry_id=None):
     """WebSocket 连接处理"""
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     
-    # 获取配置
-    config = hass.data.get(DOMAIN, {}).get("config", {})
+    # 获取配置 - 支持多个配置条目
+    if entry_id and DOMAIN in hass.data and entry_id in hass.data[DOMAIN]:
+        entry_data = hass.data[DOMAIN][entry_id]
+        config = entry_data.get("config", {})
+        devices_store = entry_data.get("devices", {})
+    else:
+        # 回退到第一个可用的配置条目
+        if DOMAIN in hass.data:
+            first_entry = next(iter(hass.data[DOMAIN].values()), {})
+            config = first_entry.get("config", {})
+            devices_store = first_entry.get("devices", {})
+            entry_id = list(hass.data[DOMAIN].keys())[0] if hass.data[DOMAIN] else None
+        else:
+            config = {}
+            devices_store = {}
+    
     debug = config.get(CONF_DEBUG, True)
     require_token = config.get(CONF_REQUIRE_TOKEN, False)
     allowed_tokens = config.get(CONF_ALLOWED_TOKENS, [])
@@ -64,7 +91,7 @@ async def ws_handler(hass, request):
     device = None
     
     if debug:
-        _LOGGER.info("🔗 xiaozhi_ha_bridge: 新的终端连接请求")
+        _LOGGER.info("🔗 xiaozhi_ha_bridge: 新的终端连接请求 (entry: %s)", entry_id)
 
     try:
         async for msg in ws:
@@ -77,14 +104,19 @@ async def ws_handler(hass, request):
 
                 if msg_type == "hello":
                     # 处理握手
-                    device = await handle_hello(hass, ws, data, config, debug, require_token, allowed_tokens)
+                    device = await handle_hello(hass, ws, data, config, debug, require_token, allowed_tokens, devices_store, entry_id)
                     if not device:
                         await ws.close()
                         return ws
                         
+                elif msg_type == "assist_pipeline/run":
+                    # Home Assistant Assist Pipeline 兼容协议
+                    if device:
+                        await handle_assist_pipeline(hass, ws, device, data, debug, config)
+                        
                 elif msg_type == "listen":
                     if device:
-                        await handle_listen(hass, ws, device, data, debug)
+                        await handle_listen(hass, ws, device, data, debug, config)
                         
                 elif msg_type == "abort":
                     if device:
@@ -96,12 +128,9 @@ async def ws_handler(hass, request):
                         await handle_iot_control(hass, ws, device, data, debug)
                         
             elif msg.type == WSMsgType.BINARY:
-                # 收到音频帧
-                if device:
-                    device.audio_chunks.append(msg.data)
-                    device.update_activity()
-                    if debug:
-                        _LOGGER.debug("🎵 收到音频帧: %d bytes", len(msg.data))
+                # 收到音频帧 - 处理Assist Pipeline二进制数据
+                if device and device.pipeline_handler_id is not None:
+                    await handle_binary_audio(hass, ws, device, msg.data, debug)
                         
             elif msg.type == WSMsgType.ERROR:
                 _LOGGER.error("❌ WebSocket连接异常: %s", ws.exception())
@@ -110,11 +139,17 @@ async def ws_handler(hass, request):
         _LOGGER.error("❌ WebSocket处理异常: %s", e)
     finally:
         if device:
+            # 清理pipeline
+            if device.current_pipeline:
+                try:
+                    await device.current_pipeline.abort()
+                except:
+                    pass
+            
             device.set_status(DEVICE_STATUS_DISCONNECTED)
             # 从设备管理器中移除
-            devices = hass.data.get(DOMAIN, {}).get("devices", {})
-            if device.device_id in devices:
-                del devices[device.device_id]
+            if device.device_id in devices_store:
+                del devices_store[device.device_id]
             if debug:
                 _LOGGER.info("📱 设备已断开: %s (连接时长: %s)", 
                            device.device_id, 
@@ -124,7 +159,7 @@ async def ws_handler(hass, request):
                 _LOGGER.info("🔌 未知设备断开连接")
     return ws
 
-async def handle_hello(hass, ws, data, config, debug, require_token, allowed_tokens):
+async def handle_hello(hass, ws, data, config, debug, require_token, allowed_tokens, devices_store, entry_id):
     """处理hello握手消息"""
     device_id = data.get("device_id", "unknown")
     client_id = data.get("client_id", str(uuid.uuid4()))
@@ -140,30 +175,29 @@ async def handle_hello(hass, ws, data, config, debug, require_token, allowed_tok
             return None
     
     # 创建设备对象
-    device = XiaozhiDevice(device_id, client_id, ws)
+    device = XiaozhiDevice(device_id, client_id, ws, entry_id)
     
     # 添加到设备管理器
-    devices = hass.data.get(DOMAIN, {}).get("devices", {})
-    devices[device_id] = device
+    devices_store[device_id] = device
     
     if debug:
-        _LOGGER.info("📱 设备已连接: %s (客户端ID: %s)", device_id, client_id)
+        _LOGGER.info("📱 设备已连接: %s (客户端ID: %s, entry: %s)", device_id, client_id, entry_id)
     
-    # 返回server hello
+    # 返回server hello - 兼容ESPHome语音助手格式
     response = {
         "type": "hello",
         "session_id": device.session_id,
-        "audio_params": {
+        "audio_settings": {
             "format": "opus",
             "sample_rate": 16000,
             "channels": 1,
             "frame_duration": 60
         },
-        "transport": "websocket",
+        "protocol_version": "1.0",
         "server_info": {
             "name": "xiaozhi_ha_bridge",
-            "version": "0.1.0",
-            "features": ["stt", "tts", "iot_control", "emotion"]
+            "version": "0.2.0",
+            "capabilities": ["stt", "tts", "assist_pipeline", "iot_control"]
         }
     }
     
@@ -173,52 +207,145 @@ async def handle_hello(hass, ws, data, config, debug, require_token, allowed_tok
     
     return device
 
-async def handle_listen(hass, ws, device, data, debug):
-    """处理语音识别消息"""
+async def handle_assist_pipeline(hass, ws, device, data, debug, config):
+    """处理Home Assistant Assist Pipeline请求"""
+    try:
+        pipeline_id = data.get("pipeline") or config.get(CONF_PIPELINE_ID)
+        start_stage = data.get("start_stage", "stt")
+        end_stage = data.get("end_stage", "tts")
+        conversation_id = data.get("conversation_id")
+        device_id = data.get("device_id", device.device_id)
+        
+        # 创建pipeline运行
+        runner_data = await assist_pipeline.async_pipeline_from_audio_stream(
+            hass,
+            event_callback=lambda event: handle_pipeline_event(ws, device, event, debug),
+            stt_metadata=assist_pipeline.SpeechMetadata(
+                language=config.get(CONF_LANGUAGE, "zh-CN"),
+                format=assist_pipeline.AudioFormats.OPUS,
+                codec=assist_pipeline.AudioCodecs.OPUS,
+                bit_rate=assist_pipeline.AudioBitRates.BITRATE_16,
+                sample_rate=assist_pipeline.AudioSampleRates.SAMPLERATE_16000,
+                channel=assist_pipeline.AudioChannels.CHANNEL_MONO,
+            ),
+            pipeline_id=pipeline_id,
+            conversation_id=conversation_id,
+            device_id=device_id,
+            tts_audio_output="raw",
+        )
+        
+        device.current_pipeline = runner_data
+        device.pipeline_handler_id = runner_data.stt_binary_handler_id
+        
+        # 发送run-start事件
+        await ws.send_json({
+            "type": "run-start",
+            "data": {
+                "pipeline": pipeline_id,
+                "language": config.get(CONF_LANGUAGE, "zh-CN"),
+                "runner_data": {
+                    "stt_binary_handler_id": device.pipeline_handler_id,
+                    "timeout": data.get("timeout", 300)
+                }
+            }
+        })
+        
+        if debug:
+            _LOGGER.info("🚀 Assist Pipeline 启动: %s", pipeline_id)
+            
+    except Exception as e:
+        _LOGGER.error("❌ Assist Pipeline 启动失败: %s", e)
+        await ws.send_json({
+            "type": "error",
+            "data": {
+                "code": "pipeline-start-failed",
+                "message": str(e)
+            }
+        })
+
+async def handle_binary_audio(hass, ws, device, binary_data, debug):
+    """处理二进制音频数据"""
+    if not device.current_pipeline:
+        return
+        
+    try:
+        # 检查是否是结束标记（单字节）
+        if len(binary_data) == 1:
+            # 音频流结束
+            await device.current_pipeline.end_stream()
+            if debug:
+                _LOGGER.info("🎵 音频流结束")
+        else:
+            # 提取handler_id和音频数据
+            handler_id = binary_data[0]
+            audio_data = binary_data[1:]
+            
+            if handler_id == device.pipeline_handler_id:
+                await device.current_pipeline.receive_audio(audio_data)
+                if debug:
+                    _LOGGER.debug("🎵 收到音频帧: %d bytes", len(audio_data))
+                    
+    except Exception as e:
+        _LOGGER.error("❌ 音频处理失败: %s", e)
+
+async def handle_pipeline_event(ws, device, event, debug):
+    """处理pipeline事件"""
+    try:
+        event_type = event.type
+        
+        if debug:
+            _LOGGER.debug("📡 Pipeline事件: %s", event_type)
+        
+        # 转发事件到客户端
+        await ws.send_json({
+            "type": event_type,
+            "data": event.data if hasattr(event, 'data') else {}
+        })
+        
+        # 特殊处理某些事件
+        if event_type == "run-end":
+            device.current_pipeline = None
+            device.pipeline_handler_id = None
+            device.set_status(DEVICE_STATUS_CONNECTED)
+            
+        elif event_type == "stt-start":
+            device.set_status(DEVICE_STATUS_LISTENING)
+            
+        elif event_type == "tts-start":
+            device.set_status(DEVICE_STATUS_SPEAKING)
+            
+    except Exception as e:
+        _LOGGER.error("❌ Pipeline事件处理失败: %s", e)
+
+async def handle_listen(hass, ws, device, data, debug, config):
+    """处理旧版listen消息（向后兼容）"""
     state = data.get("state")
     
     if state == "start":
-        device.audio_chunks = []
-        device.set_status(DEVICE_STATUS_LISTENING)
-        await ws.send_json({"type": "listen", "state": "listening"})
-        if debug:
-            _LOGGER.info("🎤 开始语音识别: %s", device.device_id)
-            
+        # 转换为新的assist_pipeline格式
+        await handle_assist_pipeline(hass, ws, device, {
+            "type": "assist_pipeline/run",
+            "start_stage": "stt",
+            "end_stage": "tts",
+            "input": {
+                "sample_rate": 16000
+            }
+        }, debug, config)
+        
     elif state == "stop":
-        device.set_status(DEVICE_STATUS_SPEAKING)
-        if debug:
-            _LOGGER.info("🛑 结束语音识别: %s (音频帧数: %d)", 
-                       device.device_id, len(device.audio_chunks))
-        
-        # 处理音频
-        if device.audio_chunks:
-            result = await process_audio(hass, device, b"".join(device.audio_chunks), debug)
-            
-            # 发送识别结果
-            await ws.send_json({
-                "type": "asr",
-                "text": result.get("text", ""),
-                "intent": result.get("intent", ""),
-                "response": result.get("response", ""),
-                "emotion": result.get("emotion", "neutral"),
-                "confidence": result.get("confidence", 0.0)
-            })
-            
-            # TTS
-            tts_audio = await tts_speak(hass, result.get("response", ""), debug)
-            if tts_audio:
-                await ws.send_bytes(tts_audio)
-                if debug:
-                    _LOGGER.info("🔊 TTS音频已发送: %d bytes", len(tts_audio))
-        
-        device.audio_chunks = []
-        device.set_status(DEVICE_STATUS_CONNECTED)
+        # 发送音频结束标记
+        if device.pipeline_handler_id:
+            await ws.send_bytes(bytes([device.pipeline_handler_id]))
 
 async def handle_abort(hass, ws, device, data, debug):
     """处理中止消息"""
-    device.audio_chunks = []
+    if device.current_pipeline:
+        await device.current_pipeline.abort()
+        device.current_pipeline = None
+        device.pipeline_handler_id = None
+    
     device.set_status(DEVICE_STATUS_CONNECTED)
-    await ws.send_json({"type": "abort", "msg": "会话已中止"})
+    await ws.send_json({"type": "abort", "message": "会话已中止"})
     if debug:
         _LOGGER.info("⏹️ 会话中止: %s", device.device_id)
 
@@ -252,104 +379,4 @@ async def handle_iot_control(hass, ws, device, data, debug):
             "type": "iot_control", 
             "status": "error",
             "message": str(e)
-        })
-
-async def process_audio(hass, device, audio_bytes, debug):
-    """调用HA Assist Pipeline进行语音识别和意图解析"""
-    result = {"text": "", "intent": "", "response": "", "emotion": "neutral", "confidence": 0.0}
-    
-    try:
-        # 获取配置
-        config = hass.data.get(DOMAIN, {}).get("config", {})
-        pipeline_id = config.get(CONF_PIPELINE_ID)
-        language = config.get(CONF_LANGUAGE, "zh-CN")
-        
-        if debug:
-            _LOGGER.info("🧠 开始语音识别处理 (pipeline: %s, 语言: %s)", pipeline_id, language)
-        
-        # 获取pipeline
-        pipeline = await assist_pipeline.async_get_pipeline(hass, pipeline_id)
-        
-        # 语音识别
-        stt_result = await pipeline.stt_stream(
-            audio_bytes,
-            sample_rate=16000,
-            language=language,
-            media_format="opus"
-        )
-        
-        text = stt_result.get("text", "")
-        result["text"] = text
-        result["confidence"] = stt_result.get("confidence", 0.0)
-        
-        if debug:
-            _LOGGER.info("🗣️ 识别结果: '%s' (置信度: %.2f)", text, result["confidence"])
-        
-        # 意图解析和对话
-        if text:
-            conversation_result = await conversation.async_converse(
-                hass, text, None, language=language
-            )
-            
-            response_text = conversation_result.response.speech.get("plain", {}).get("speech", text)
-            result["response"] = response_text
-            result["intent"] = conversation_result.response.intent.intent_type if conversation_result.response.intent else ""
-            
-            # 简单情感分析
-            result["emotion"] = analyze_emotion(text, response_text)
-            
-            if debug:
-                _LOGGER.info("💬 对话结果: '%s' (意图: %s, 情感: %s)", 
-                           response_text, result["intent"], result["emotion"])
-        
-    except Exception as e:
-        _LOGGER.error("❌ 语音识别失败: %s", e)
-        result["response"] = "抱歉，我没有听清楚"
-        result["emotion"] = "confused"
-    
-    return result
-
-async def tts_speak(hass, text, debug):
-    """调用HA TTS服务，将文本转为音频（OPUS）"""
-    try:
-        # 获取配置
-        config = hass.data.get(DOMAIN, {}).get("config", {})
-        tts_engine = config.get(CONF_TTS_ENGINE)
-        language = config.get(CONF_LANGUAGE, "zh-CN")
-        
-        if debug:
-            _LOGGER.info("🎵 开始TTS合成: '%s' (引擎: %s)", text, tts_engine)
-        
-        tts_result = await tts.async_get_tts_audio(
-            hass, 
-            engine=tts_engine, 
-            message=text, 
-            language=language, 
-            options={}
-        )
-        
-        if tts_result:
-            return tts_result[1]  # 返回音频二进制
-            
-    except Exception as e:
-        _LOGGER.error("❌ TTS失败: %s", e)
-    
-    return None
-
-def analyze_emotion(input_text, response_text):
-    """简单的情感分析"""
-    # 这里可以集成更复杂的情感分析模型
-    positive_words = ["好", "棒", "谢谢", "开心", "高兴", "喜欢"]
-    negative_words = ["不", "坏", "错", "生气", "难过", "讨厌"]
-    question_words = ["什么", "怎么", "为什么", "哪里", "谁", "?", "？"]
-    
-    text = input_text + " " + response_text
-    
-    if any(word in text for word in question_words):
-        return "curious"
-    elif any(word in text for word in positive_words):
-        return "happy"
-    elif any(word in text for word in negative_words):
-        return "sad"
-    else:
-        return "neutral" 
+        }) 
