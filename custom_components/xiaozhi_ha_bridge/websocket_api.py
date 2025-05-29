@@ -224,26 +224,49 @@ async def handle_assist_pipeline(hass, ws, device, data, debug, config):
         conversation_id = data.get("conversation_id")
         device_id = data.get("device_id", device.device_id)
         
-        # 创建pipeline运行
-        runner_data = await assist_pipeline.async_pipeline_from_audio_stream(
-            hass,
-            event_callback=lambda event: handle_pipeline_event(ws, device, event, debug),
-            stt_metadata=assist_pipeline.SpeechMetadata(
-                language=config.get(CONF_LANGUAGE, "zh-CN"),
-                format=assist_pipeline.AudioFormats.OPUS,
-                codec=assist_pipeline.AudioCodecs.OPUS,
-                bit_rate=assist_pipeline.AudioBitRates.BITRATE_16,
-                sample_rate=assist_pipeline.AudioSampleRates.SAMPLERATE_16000,
-                channel=assist_pipeline.AudioChannels.CHANNEL_MONO,
-            ),
-            pipeline_id=pipeline_id,
-            conversation_id=conversation_id,
-            device_id=device_id,
-            tts_audio_output="raw",
-        )
+        # 使用更新的Assist Pipeline API
+        try:
+            # 尝试使用新的API
+            runner_data = await assist_pipeline.async_pipeline_from_audio_stream(
+                hass,
+                event_callback=lambda event: handle_pipeline_event(ws, device, event, debug),
+                stt_metadata=assist_pipeline.SpeechMetadata(
+                    language=config.get(CONF_LANGUAGE, "zh-CN"),
+                    format=assist_pipeline.AudioFormats.OPUS,
+                    codec=assist_pipeline.AudioCodecs.OPUS,
+                    bit_rate=assist_pipeline.AudioBitRates.BITRATE_16,
+                    sample_rate=assist_pipeline.AudioSampleRates.SAMPLERATE_16000,
+                    channel=assist_pipeline.AudioChannels.CHANNEL_MONO,
+                ),
+                pipeline_id=pipeline_id,
+                conversation_id=conversation_id,
+                device_id=device_id,
+                tts_audio_output="raw",
+            )
+        except AttributeError:
+            # 如果新API不存在，回退到简化版本
+            _LOGGER.warning("使用简化的Assist Pipeline实现（旧版本兼容）")
+            # 简化的实现 - 直接调用对话服务
+            response = await conversation.async_converse(
+                hass, 
+                text=data.get("text", ""), 
+                conversation_id=conversation_id,
+                device_id=device_id,
+                language=config.get(CONF_LANGUAGE, "zh-CN")
+            )
+            
+            # 发送对话响应
+            await ws.send_json({
+                "type": "conversation-response",
+                "data": {
+                    "response": response.response.speech.get("plain", {}).get("speech", ""),
+                    "conversation_id": response.conversation_id
+                }
+            })
+            return
         
         device.current_pipeline = runner_data
-        device.pipeline_handler_id = runner_data.stt_binary_handler_id
+        device.pipeline_handler_id = getattr(runner_data, 'stt_binary_handler_id', 1)
         
         # 发送run-start事件
         await ws.send_json({

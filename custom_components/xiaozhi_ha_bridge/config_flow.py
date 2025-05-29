@@ -148,9 +148,12 @@ class XiaozhiHABridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _get_available_tts_engines(self):
         """获取可用的TTS引擎列表"""
         try:
+            # 使用正确的方法获取TTS实体
             from homeassistant.components import tts
-            engines = await tts.async_get_speech_to_text_engines(self.hass)
-            return {engine: engine for engine in engines}
+            # 获取所有TTS实体而不是调用deprecated API
+            tts_entities = self.hass.states.async_all("tts")
+            return {entity.entity_id: entity.attributes.get("friendly_name", entity.entity_id) 
+                   for entity in tts_entities}
         except Exception:
             return {}
 
@@ -158,7 +161,7 @@ class XiaozhiHABridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry):
         """返回选项流程"""
-        return XiaozhiHABridgeOptionsFlow(config_entry)
+        return XiaozhiHABridgeOptionsFlow()
 
 
 class XiaozhiHABridgeOptionsFlow(config_entries.OptionsFlow):
