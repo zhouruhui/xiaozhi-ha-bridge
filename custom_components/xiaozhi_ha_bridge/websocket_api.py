@@ -69,6 +69,15 @@ async def async_setup_ws(hass, entry_id=None):
 async def ws_handler(hass, request, entry_id=None):
     """WebSocket 连接处理"""
     
+    _LOGGER.info("🔍 [DEBUG] WebSocket连接请求开始处理")
+    _LOGGER.info("🔍 [DEBUG] 请求路径: %s", request.path)
+    _LOGGER.info("🔍 [DEBUG] 请求方法: %s", request.method)
+    
+    # 记录所有headers
+    _LOGGER.info("🔍 [DEBUG] 所有请求Headers:")
+    for key, value in request.headers.items():
+        _LOGGER.info("🔍 [DEBUG]   %s: %s", key, value)
+    
     # 获取配置 - 优先使用指定的entry_id，否则使用第一个可用配置
     config = {}
     devices_store = {}
@@ -94,12 +103,20 @@ async def ws_handler(hass, request, entry_id=None):
     require_token = config.get(CONF_REQUIRE_TOKEN, False)
     allowed_tokens = config.get(CONF_ALLOWED_TOKENS, [])
     
+    _LOGGER.info("🔍 [DEBUG] 配置信息: debug=%s, require_token=%s", debug, require_token)
+    
     # 从WebSocket headers中提取小智协议信息
     headers = request.headers
     auth_header = headers.get("Authorization", "")
     protocol_version = headers.get("Protocol-Version", "1")  # 小智协议默认版本1
     device_id = headers.get("Device-Id", "unknown")
     client_id = headers.get("Client-Id", str(uuid.uuid4()))
+    
+    _LOGGER.info("🔍 [DEBUG] 提取的协议信息:")
+    _LOGGER.info("🔍 [DEBUG]   Authorization: %s", auth_header[:20] + "..." if auth_header else "无")
+    _LOGGER.info("🔍 [DEBUG]   Protocol-Version: %s", protocol_version)
+    _LOGGER.info("🔍 [DEBUG]   Device-Id: %s", device_id)
+    _LOGGER.info("🔍 [DEBUG]   Client-Id: %s", client_id)
     
     if debug:
         _LOGGER.info("🔗 小智终端连接: device_id=%s, client_id=%s, protocol_version=%s", 
@@ -109,78 +126,104 @@ async def ws_handler(hass, request, entry_id=None):
     if require_token:
         token = auth_header.replace("Bearer ", "").strip()
         if not token or (allowed_tokens and token not in allowed_tokens):
-            if debug:
-                _LOGGER.warning("🚫 设备鉴权失败: %s", device_id)
+            _LOGGER.warning("🚫 [DEBUG] 设备鉴权失败: %s", device_id)
             # 直接关闭连接，不允许握手
             return web.Response(status=401, text="Unauthorized")
     
+    _LOGGER.info("🔍 [DEBUG] 准备创建WebSocket连接")
+    
     # 创建WebSocket连接
-    ws = web.WebSocketResponse()
-    await ws.prepare(request)
+    try:
+        ws = web.WebSocketResponse()
+        _LOGGER.info("🔍 [DEBUG] WebSocket对象创建成功")
+        
+        await ws.prepare(request)
+        _LOGGER.info("🔍 [DEBUG] WebSocket握手prepare完成")
+        
+    except Exception as e:
+        _LOGGER.error("❌ [DEBUG] WebSocket创建失败: %s", e, exc_info=True)
+        return web.Response(status=500, text="WebSocket creation failed")
     
     # 创建设备对象
     device = XiaozhiDevice(device_id, client_id, ws, actual_entry_id)
     devices_store[device_id] = device
+    
+    _LOGGER.info("🔍 [DEBUG] 设备对象创建完成")
     
     if debug:
         _LOGGER.info("📱 小智设备已连接: %s (协议版本: %s, entry: %s)", 
                     device_id, protocol_version, actual_entry_id)
 
     try:
+        _LOGGER.info("🔍 [DEBUG] 开始WebSocket消息循环")
+        
         async for msg in ws:
+            _LOGGER.info("🔍 [DEBUG] 收到WebSocket消息: type=%s", msg.type)
+            
             if msg.type == WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
                     msg_type = data.get("type")
                     
+                    _LOGGER.info("🔍 [DEBUG] 解析JSON消息成功: type=%s", msg_type)
                     if debug:
                         _LOGGER.debug("📨 收到消息: %s", data)
 
                     if msg_type == "hello":
                         # 处理hello握手消息
+                        _LOGGER.info("🔍 [DEBUG] 处理hello消息")
                         await handle_hello(hass, ws, device, protocol_version, debug)
                             
                     elif msg_type == "assist_pipeline/run":
                         # Home Assistant Assist Pipeline 兼容协议
+                        _LOGGER.info("🔍 [DEBUG] 处理assist_pipeline消息")
                         await handle_assist_pipeline(hass, ws, device, data, debug, config)
                             
                     elif msg_type == "listen":
+                        _LOGGER.info("🔍 [DEBUG] 处理listen消息")
                         await handle_listen(hass, ws, device, data, debug, config)
                             
                     elif msg_type == "abort":
+                        _LOGGER.info("🔍 [DEBUG] 处理abort消息")
                         await handle_abort(hass, ws, device, data, debug)
                             
                     # 扩展：IoT设备控制
                     elif msg_type == "iot_control":
+                        _LOGGER.info("🔍 [DEBUG] 处理iot_control消息")
                         await handle_iot_control(hass, ws, device, data, debug)
                     
                     # 处理ping/pong保持连接
                     elif msg_type == "ping":
+                        _LOGGER.info("🔍 [DEBUG] 处理ping消息")
                         await ws.send_json({"type": "pong"})
                         if debug:
                             _LOGGER.debug("🏓 Ping-Pong")
+                    else:
+                        _LOGGER.warning("🔍 [DEBUG] 未知消息类型: %s", msg_type)
                         
                 except json.JSONDecodeError as e:
-                    _LOGGER.error("❌ JSON解析错误: %s", e)
+                    _LOGGER.error("❌ [DEBUG] JSON解析错误: %s", e)
                     await ws.send_json({"type": "error", "message": "Invalid JSON"})
                         
             elif msg.type == WSMsgType.BINARY:
+                _LOGGER.info("🔍 [DEBUG] 收到二进制消息: %d bytes", len(msg.data))
                 # 收到音频帧 - 处理Assist Pipeline二进制数据
                 if device and device.pipeline_handler_id is not None:
                     await handle_binary_audio(hass, ws, device, msg.data, debug)
                         
             elif msg.type == WSMsgType.ERROR:
-                _LOGGER.error("❌ WebSocket连接异常: %s", ws.exception())
+                _LOGGER.error("❌ [DEBUG] WebSocket连接异常: %s", ws.exception())
                 break
                 
             elif msg.type == WSMsgType.CLOSE:
-                if debug:
-                    _LOGGER.info("🔌 WebSocket连接正常关闭")
+                _LOGGER.info("🔍 [DEBUG] WebSocket连接正常关闭")
                 break
                 
     except Exception as e:
-        _LOGGER.error("❌ WebSocket处理异常: %s", e, exc_info=True)
+        _LOGGER.error("❌ [DEBUG] WebSocket处理异常: %s", e, exc_info=True)
     finally:
+        _LOGGER.info("🔍 [DEBUG] WebSocket连接结束，开始清理")
+        
         if device:
             # 清理pipeline
             if device.current_pipeline:
@@ -200,10 +243,15 @@ async def ws_handler(hass, request, entry_id=None):
         else:
             if debug:
                 _LOGGER.info("🔌 未知设备断开连接")
+    
+    _LOGGER.info("🔍 [DEBUG] WebSocket处理完成")
     return ws
 
 async def handle_hello(hass, ws, device, protocol_version, debug):
     """处理hello握手消息"""
+    _LOGGER.info("🔍 [DEBUG] handle_hello开始: device_id=%s, protocol_version=%s", 
+                device.device_id, protocol_version)
+    
     # 按照小智协议返回hello确认
     response = {
         "type": "hello",
@@ -217,15 +265,22 @@ async def handle_hello(hass, ws, device, protocol_version, debug):
         },
         "server_info": {
             "name": "xiaozhi_ha_bridge", 
-            "version": "0.2.4",
+            "version": "0.2.5",
             "capabilities": ["stt", "tts", "assist_pipeline", "iot_control"]
         },
         "status": "connected"
     }
     
-    await ws.send_json(response)
-    if debug:
-        _LOGGER.info("✅ 小智协议握手成功: %s (协议版本: %s)", device.device_id, protocol_version)
+    _LOGGER.info("🔍 [DEBUG] 准备发送hello响应: %s", response)
+    
+    try:
+        await ws.send_json(response)
+        _LOGGER.info("🔍 [DEBUG] hello响应发送成功")
+        
+        if debug:
+            _LOGGER.info("✅ 小智协议握手成功: %s (协议版本: %s)", device.device_id, protocol_version)
+    except Exception as e:
+        _LOGGER.error("❌ [DEBUG] hello响应发送失败: %s", e, exc_info=True)
 
 async def handle_assist_pipeline(hass, ws, device, data, debug, config):
     """处理Home Assistant Assist Pipeline请求"""
