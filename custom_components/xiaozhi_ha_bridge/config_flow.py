@@ -163,24 +163,23 @@ class XiaozhiHABridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class XiaozhiHABridgeOptionsFlow(config_entries.OptionsFlow):
     """小智HA桥接组件选项流程"""
-    
-    def __init__(self, config_entry):
-        """初始化选项流程"""
-        self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         """处理选项配置步骤"""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
+        # 使用新的self.config_entry属性，它由HA自动提供
+        current_options = self.config_entry.options or {}
+        
         options_schema = vol.Schema({
             vol.Optional(
                 CONF_DEBUG,
-                default=self.config_entry.options.get(CONF_DEBUG, DEFAULT_DEBUG)
+                default=current_options.get(CONF_DEBUG, DEFAULT_DEBUG)
             ): bool,
             vol.Optional(
                 CONF_REQUIRE_TOKEN,
-                default=self.config_entry.options.get(CONF_REQUIRE_TOKEN, DEFAULT_REQUIRE_TOKEN)
+                default=current_options.get(CONF_REQUIRE_TOKEN, DEFAULT_REQUIRE_TOKEN)
             ): bool,
         })
 

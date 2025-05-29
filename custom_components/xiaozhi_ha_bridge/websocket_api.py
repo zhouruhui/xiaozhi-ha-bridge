@@ -54,12 +54,15 @@ async def async_setup_ws(hass, entry_id=None):
     async def ws_handler_wrapper(request):
         return await ws_handler(hass, request, entry_id)
     
-    # 如果是特定entry，使用特定路径；否则使用通用路径
-    if entry_id:
-        ws_path = f"{WS_PATH}_{entry_id}"
-    else:
-        ws_path = WS_PATH
+    # 总是使用标准路径，避免设备端配置复杂化
+    ws_path = WS_PATH
         
+    # 检查路由是否已经存在，避免重复注册
+    for route in app.router.routes():
+        if hasattr(route, 'resource') and route.resource.canonical == ws_path:
+            _LOGGER.debug("WebSocket路由已存在，跳过注册: %s", ws_path)
+            return
+            
     app.router.add_route("GET", ws_path, ws_handler_wrapper)
     _LOGGER.info("🚀 xiaozhi_ha_bridge WebSocket 服务已启动: %s (entry: %s)", ws_path, entry_id or "default")
 
@@ -68,21 +71,26 @@ async def ws_handler(hass, request, entry_id=None):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     
-    # 获取配置 - 支持多个配置条目
-    if entry_id and DOMAIN in hass.data and entry_id in hass.data[DOMAIN]:
-        entry_data = hass.data[DOMAIN][entry_id]
-        config = entry_data.get("config", {})
-        devices_store = entry_data.get("devices", {})
-    else:
-        # 回退到第一个可用的配置条目
-        if DOMAIN in hass.data:
-            first_entry = next(iter(hass.data[DOMAIN].values()), {})
-            config = first_entry.get("config", {})
-            devices_store = first_entry.get("devices", {})
-            entry_id = list(hass.data[DOMAIN].keys())[0] if hass.data[DOMAIN] else None
+    # 获取配置 - 优先使用指定的entry_id，否则使用第一个可用配置
+    config = {}
+    devices_store = {}
+    actual_entry_id = entry_id
+    
+    if DOMAIN in hass.data:
+        if entry_id and entry_id in hass.data[DOMAIN]:
+            # 使用指定的配置条目
+            entry_data = hass.data[DOMAIN][entry_id]
+            config = entry_data.get("config", {})
+            devices_store = entry_data.get("devices", {})
+            actual_entry_id = entry_id
         else:
-            config = {}
-            devices_store = {}
+            # 使用第一个可用的配置条目
+            first_entry_id = next(iter(hass.data[DOMAIN].keys()), None)
+            if first_entry_id:
+                entry_data = hass.data[DOMAIN][first_entry_id]
+                config = entry_data.get("config", {})
+                devices_store = entry_data.get("devices", {})
+                actual_entry_id = first_entry_id
     
     debug = config.get(CONF_DEBUG, True)
     require_token = config.get(CONF_REQUIRE_TOKEN, False)
@@ -91,7 +99,7 @@ async def ws_handler(hass, request, entry_id=None):
     device = None
     
     if debug:
-        _LOGGER.info("🔗 xiaozhi_ha_bridge: 新的终端连接请求 (entry: %s)", entry_id)
+        _LOGGER.info("🔗 xiaozhi_ha_bridge: 新的终端连接请求 (entry: %s)", actual_entry_id)
 
     try:
         async for msg in ws:
@@ -104,7 +112,7 @@ async def ws_handler(hass, request, entry_id=None):
 
                 if msg_type == "hello":
                     # 处理握手
-                    device = await handle_hello(hass, ws, data, config, debug, require_token, allowed_tokens, devices_store, entry_id)
+                    device = await handle_hello(hass, ws, data, config, debug, require_token, allowed_tokens, devices_store, actual_entry_id)
                     if not device:
                         await ws.close()
                         return ws
