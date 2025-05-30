@@ -8,6 +8,7 @@ from homeassistant.components import assist_pipeline
 from homeassistant.components import tts
 from homeassistant.components import conversation
 from homeassistant.helpers import intent
+from homeassistant.core import Context
 from .const import (
     DOMAIN, 
     WS_PATH, 
@@ -41,6 +42,8 @@ class XiaozhiDevice:
         self.last_activity = datetime.now()
         self.pipeline_handler_id = None
         self.current_pipeline = None
+        self.iot_descriptors = []  # 存储设备IoT能力描述
+        self.iot_states = {}       # 存储设备当前状态
         
     def update_activity(self):
         self.last_activity = datetime.now()
@@ -236,6 +239,11 @@ async def ws_handler(hass, request, entry_id=None):
                         # 处理hello握手消息
                         _LOGGER.info("🔍 [DEBUG] 处理hello消息")
                         await handle_hello(hass, ws, device, protocol_version, debug)
+                    
+                    elif msg_type == "iot":
+                        # 处理IoT设备能力和状态消息
+                        _LOGGER.info("🔍 [DEBUG] 处理iot消息")
+                        await handle_iot_message(hass, ws, device, data, debug)
                             
                     elif msg_type == "assist_pipeline/run":
                         # Home Assistant Assist Pipeline 兼容协议
@@ -341,6 +349,43 @@ async def handle_hello(hass, ws, device, protocol_version, debug):
     except Exception as e:
         _LOGGER.error("❌ [DEBUG] hello响应发送失败: %s", e, exc_info=True)
 
+async def handle_iot_message(hass, ws, device, data, debug):
+    """处理IoT设备能力和状态消息"""
+    try:
+        update_type = data.get("update", False)
+        
+        if "descriptors" in data:
+            # 设备能力描述
+            device.iot_descriptors = data["descriptors"]
+            if debug:
+                _LOGGER.info("🏠 收到设备能力描述: %d个组件", len(device.iot_descriptors))
+                for desc in device.iot_descriptors:
+                    _LOGGER.info("🏠   - %s: %s", desc.get("name"), desc.get("description"))
+        
+        if "states" in data:
+            # 设备状态更新
+            for state_info in data["states"]:
+                name = state_info.get("name")
+                state = state_info.get("state", {})
+                device.iot_states[name] = state
+                if debug:
+                    _LOGGER.info("🏠 设备状态更新: %s = %s", name, state)
+        
+        # 发送确认响应
+        await ws.send_json({
+            "type": "iot", 
+            "status": "ok",
+            "message": "IoT信息已接收"
+        })
+        
+    except Exception as e:
+        _LOGGER.error("❌ IoT消息处理失败: %s", e)
+        await ws.send_json({
+            "type": "iot", 
+            "status": "error",
+            "message": str(e)
+        })
+
 async def handle_assist_pipeline(hass, ws, device, data, debug, config):
     """处理Home Assistant Assist Pipeline请求"""
     try:
@@ -369,15 +414,16 @@ async def handle_assist_pipeline(hass, ws, device, data, debug, config):
                 device_id=device_id,
                 tts_audio_output="raw",
             )
-        except AttributeError:
-            # 如果新API不存在，回退到简化版本
-            _LOGGER.warning("使用简化的Assist Pipeline实现（旧版本兼容）")
+        except (AttributeError, TypeError) as e:
+            # 如果新API不存在或参数不匹配，回退到简化版本
+            _LOGGER.warning("使用简化的Assist Pipeline实现（旧版本兼容）: %s", e)
             # 简化的实现 - 直接调用对话服务
+            context = Context()
             response = await conversation.async_converse(
                 hass, 
                 text=data.get("text", ""), 
                 conversation_id=conversation_id,
-                device_id=device_id,
+                context=context,  # 添加必需的context参数
                 language=config.get(CONF_LANGUAGE, "zh-CN")
             )
             
@@ -488,6 +534,17 @@ async def handle_listen(hass, ws, device, data, debug, config):
                 "sample_rate": 16000
             }
         }, debug, config)
+        
+    elif state == "detect":
+        # 唤醒词检测到，发送确认
+        text = data.get("text", "")
+        if debug:
+            _LOGGER.info("🎯 唤醒词检测: %s", text)
+        await ws.send_json({
+            "type": "listen",
+            "state": "detected",
+            "text": text
+        })
         
     elif state == "stop":
         # 发送音频结束标记
