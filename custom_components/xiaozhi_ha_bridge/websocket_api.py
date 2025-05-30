@@ -48,22 +48,68 @@ class XiaozhiDevice:
 
 async def async_setup_ws(hass, entry_id=None):
     """注册 WebSocket 路由"""
+    _LOGGER.info("🔍 [DEBUG] async_setup_ws开始: entry_id=%s", entry_id)
+    
     app = hass.http.app
+    _LOGGER.info("🔍 [DEBUG] 获取到HTTP应用: %s", type(app))
+    
+    # 创建测试HTTP处理函数
+    async def test_handler(request):
+        _LOGGER.info("🔍 [DEBUG] test_handler被调用: %s", request.path)
+        return web.Response(text="Xiaozhi HA Bridge WebSocket endpoint is working!")
     
     # 创建路由处理函数，绑定entry_id
     async def ws_handler_wrapper(request):
+        _LOGGER.info("🔍 [DEBUG] ws_handler_wrapper被调用: %s", request.path)
         return await ws_handler(hass, request, entry_id)
     
     # 总是使用标准路径，避免设备端配置复杂化
     ws_path = WS_PATH
+    test_path = ws_path + "/test"
+    _LOGGER.info("🔍 [DEBUG] WebSocket路径: %s", ws_path)
+    _LOGGER.info("🔍 [DEBUG] 测试路径: %s", test_path)
         
-    # 检查路由是否已经存在，避免重复注册
+    # 记录现有路由（用于调试）
+    existing_routes = []
     for route in app.router.routes():
-        if hasattr(route, 'resource') and route.resource.canonical == ws_path:
-            _LOGGER.debug("WebSocket路由已存在，跳过注册: %s", ws_path)
-            return
+        if hasattr(route, 'resource'):
+            existing_routes.append(route.resource.canonical)
+    
+    _LOGGER.info("🔍 [DEBUG] 现有路由总数: %d", len(existing_routes))
+    _LOGGER.info("🔍 [DEBUG] API相关路由: %s", [r for r in existing_routes if '/api/' in r][:10])
+    
+    try:
+        # 注册测试HTTP端点（不需要认证）
+        app.router.add_get(test_path, test_handler)
+        _LOGGER.info("🔍 [DEBUG] 测试HTTP端点注册成功: %s", test_path)
+        
+        # 使用正确的WebSocket路由注册方式
+        # 注意：这里不检查重复，让HA的路由系统处理
+        app.router.add_get(ws_path, ws_handler_wrapper)
+        _LOGGER.info("🔍 [DEBUG] WebSocket路由注册成功: %s", ws_path)
+        
+        # 验证路由是否真的注册了
+        routes_found = {"ws": False, "test": False}
+        for route in app.router.routes():
+            if hasattr(route, 'resource'):
+                if route.resource.canonical == ws_path:
+                    routes_found["ws"] = True
+                    _LOGGER.info("🔍 [DEBUG] WebSocket路由验证成功: %s", ws_path)
+                elif route.resource.canonical == test_path:
+                    routes_found["test"] = True
+                    _LOGGER.info("🔍 [DEBUG] 测试路由验证成功: %s", test_path)
+                
+        if not routes_found["ws"]:
+            _LOGGER.error("❌ [DEBUG] WebSocket路由注册后验证失败!")
+        if not routes_found["test"]:
+            _LOGGER.error("❌ [DEBUG] 测试路由注册后验证失败!")
+        else:
+            _LOGGER.info("✅ [DEBUG] 测试端点可用: http://your-ha-ip:8123%s", test_path)
             
-    app.router.add_route("GET", ws_path, ws_handler_wrapper)
+    except Exception as e:
+        _LOGGER.error("❌ [DEBUG] 路由注册失败: %s", e, exc_info=True)
+        return
+            
     _LOGGER.info("🚀 xiaozhi_ha_bridge WebSocket 服务已启动: %s (entry: %s)", ws_path, entry_id or "default")
 
 async def ws_handler(hass, request, entry_id=None):
@@ -72,11 +118,22 @@ async def ws_handler(hass, request, entry_id=None):
     _LOGGER.info("🔍 [DEBUG] WebSocket连接请求开始处理")
     _LOGGER.info("🔍 [DEBUG] 请求路径: %s", request.path)
     _LOGGER.info("🔍 [DEBUG] 请求方法: %s", request.method)
+    _LOGGER.info("🔍 [DEBUG] 远程地址: %s", request.remote)
+    _LOGGER.info("🔍 [DEBUG] 用户代理: %s", request.headers.get('User-Agent', 'Unknown'))
     
     # 记录所有headers
     _LOGGER.info("🔍 [DEBUG] 所有请求Headers:")
     for key, value in request.headers.items():
         _LOGGER.info("🔍 [DEBUG]   %s: %s", key, value)
+    
+    # 检查WebSocket升级
+    connection = request.headers.get('Connection', '').lower()
+    upgrade = request.headers.get('Upgrade', '').lower()
+    _LOGGER.info("🔍 [DEBUG] Connection: %s, Upgrade: %s", connection, upgrade)
+    
+    if 'upgrade' not in connection or upgrade != 'websocket':
+        _LOGGER.error("❌ [DEBUG] 不是有效的WebSocket升级请求")
+        return web.Response(status=400, text="Bad Request: Not a WebSocket upgrade")
     
     # 获取配置 - 优先使用指定的entry_id，否则使用第一个可用配置
     config = {}
