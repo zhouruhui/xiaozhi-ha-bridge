@@ -315,23 +315,19 @@ async def handle_hello(hass, ws, device, protocol_version, debug):
     _LOGGER.info("🔍 [DEBUG] handle_hello开始: device_id=%s, protocol_version=%s", 
                 device.device_id, protocol_version)
     
-    # 按照小智协议返回hello确认
+    # 按照小智协议返回hello确认 - 修正格式匹配小智期望
     response = {
         "type": "hello",
+        "version": int(protocol_version),  # 修正：使用version而不是protocol_version，且转为整数
         "session_id": device.session_id,
-        "protocol_version": protocol_version,
-        "audio_settings": {
+        "audio_params": {  # 修正：使用audio_params而不是audio_settings
             "format": "opus",
             "sample_rate": 16000,
             "channels": 1,
             "frame_duration": 60  # 小智协议规定的60ms帧长
         },
-        "server_info": {
-            "name": "xiaozhi_ha_bridge", 
-            "version": "0.2.5",
-            "capabilities": ["stt", "tts", "assist_pipeline", "iot_control"]
-        },
-        "status": "connected"
+        "features": {},  # 添加：小智期望的features字段
+        "transport": "websocket"  # 添加：小智期望的transport字段
     }
     
     _LOGGER.info("🔍 [DEBUG] 准备发送hello响应: %s", response)
