@@ -22,6 +22,9 @@ from .const import (
     DEVICE_STATUS_LISTENING,
     DEVICE_STATUS_SPEAKING
 )
+from homeassistant.components.http import HomeAssistantView
+from homeassistant.components.http.auth import async_sign_path
+from homeassistant.components.http.const import KEY_AUTHENTICATED
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,9 +61,11 @@ async def async_setup_ws(hass, entry_id=None):
         _LOGGER.info("🔍 [DEBUG] test_handler被调用: %s", request.path)
         return web.Response(text="Xiaozhi HA Bridge WebSocket endpoint is working!")
     
-    # 创建路由处理函数，绑定entry_id
+    # 创建路由处理函数，绑定entry_id，并绕过认证
     async def ws_handler_wrapper(request):
         _LOGGER.info("🔍 [DEBUG] ws_handler_wrapper被调用: %s", request.path)
+        # 标记请求为已认证，绕过HA的认证中间件
+        request[KEY_AUTHENTICATED] = True
         return await ws_handler(hass, request, entry_id)
     
     # 总是使用标准路径，避免设备端配置复杂化
@@ -118,6 +123,7 @@ async def ws_handler(hass, request, entry_id=None):
     _LOGGER.info("🔍 [DEBUG] WebSocket连接请求开始处理")
     _LOGGER.info("🔍 [DEBUG] 请求路径: %s", request.path)
     _LOGGER.info("🔍 [DEBUG] 请求方法: %s", request.method)
+    _LOGGER.info("🔍 [DEBUG] 请求协议: %s", request.scheme)  # 显示http或https
     _LOGGER.info("🔍 [DEBUG] 远程地址: %s", request.remote)
     _LOGGER.info("🔍 [DEBUG] 用户代理: %s", request.headers.get('User-Agent', 'Unknown'))
     
